@@ -416,32 +416,49 @@ const zoomLabel   = document.getElementById('zoomLabel');
 let currentSvg = null;
 
 // ── Zoom / pan state ──────────────────────────────────────────────
+// Strategy: resize SVG via width/height attributes (true vector re-render)
+// + translate-only transform for pan. Never use scale() — it composites at
+// natural pixel size then upscales the bitmap, which is why zoom looked blurry.
 let zoom = 1, panX = 0, panY = 0;
+let svgNatW = 800, svgNatH = 600;
 let isPanning = false, lastMouse = { x: 0, y: 0 };
 
-function updateTransform() {
-  previewImg.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+function getSvgEl() { return previewImg.querySelector('svg'); }
+
+function applyZoom() {
+  const svgEl = getSvgEl();
+  if (svgEl) {
+    svgEl.setAttribute('width',  Math.round(svgNatW * zoom));
+    svgEl.setAttribute('height', Math.round(svgNatH * zoom));
+  }
+  // Translate-only: no scale() means no compositing-layer rasterisation
+  previewImg.style.transform = `translate(${panX}px, ${panY}px)`;
   zoomLabel.textContent = Math.round(zoom * 100) + '%';
 }
-function resetZoom() { zoom = 1; panX = 0; panY = 0; updateTransform(); }
 
-zoomInBtn.addEventListener('click',  () => { zoom = Math.min(zoom * 1.25, 10); updateTransform(); });
-zoomOutBtn.addEventListener('click', () => { zoom = Math.max(zoom / 1.25, 0.1); updateTransform(); });
+function resetZoom() {
+  panX = 0; panY = 0;
+  // Fit to available space; never exceed 100% on first load
+  const availW = previewArea.clientWidth  - 40;
+  const availH = previewArea.clientHeight - 40;
+  zoom = Math.min(availW / svgNatW, availH / svgNatH, 1);
+  applyZoom();
+}
+
+// Alias so existing call sites still work
+function updateTransform() { applyZoom(); }
+
+zoomInBtn.addEventListener('click',  () => { zoom = Math.min(zoom * 1.25, 20); applyZoom(); });
+zoomOutBtn.addEventListener('click', () => { zoom = Math.max(zoom / 1.25, 0.05); applyZoom(); });
 zoomFitBtn.addEventListener('click', resetZoom);
 
-// Mouse-wheel zoom towards cursor
+// Mouse-wheel zoom
 previewArea.addEventListener('wheel', e => {
   if (!currentSvg) return;
   e.preventDefault();
-  const rect   = previewArea.getBoundingClientRect();
-  const cx     = e.clientX - rect.left - rect.width  / 2;
-  const cy     = e.clientY - rect.top  - rect.height / 2;
   const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-  const nz     = Math.min(Math.max(zoom * factor, 0.1), 10);
-  panX = cx - (cx - panX) * (nz / zoom);
-  panY = cy - (cy - panY) * (nz / zoom);
-  zoom = nz;
-  updateTransform();
+  zoom = Math.min(Math.max(zoom * factor, 0.05), 20);
+  applyZoom();
 }, { passive: false });
 
 // Click-drag to pan
@@ -533,7 +550,14 @@ async function render() {
     document.getElementById(id)?.remove();
 
     currentSvg = svg;
-    previewImg.innerHTML = svg;          // inline SVG — vector-crisp at any zoom
+    previewImg.innerHTML = svg;
+
+    // Read natural dimensions from viewBox so resetZoom can fit-to-pane
+    const vb = svg.match(/viewBox="([^"]+)"/);
+    const vbParts = vb ? vb[1].trim().split(/\s+/) : [];
+    svgNatW = parseFloat(vbParts[2]) || 800;
+    svgNatH = parseFloat(vbParts[3]) || 600;
+
     placeholder.classList.add('hidden');
     previewImg.classList.remove('hidden');
     downloadBtn.disabled = false;
