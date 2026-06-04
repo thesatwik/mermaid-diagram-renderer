@@ -99,16 +99,28 @@
 
     .preview-area {
       flex: 1; display: flex; align-items: center; justify-content: center;
-      overflow: auto; background: white; position: relative; padding: 20px;
+      overflow: hidden; background: white; position: relative; padding: 20px;
     }
+    .preview-area.has-image { cursor: grab; }
+    .preview-area.has-image.panning { cursor: grabbing !important; }
     .preview-placeholder { text-align: center; color: var(--text-secondary); font-size: 14px; line-height: 1.8; }
     .preview-placeholder svg { display: block; margin: 0 auto 12px; opacity: 0.25; }
 
     #previewImg {
-      max-width: 100%; max-height: 100%; object-fit: contain;
+      max-width: 100%; max-height: 100%;
       border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.08);
+      transform-origin: center center; will-change: transform; user-select: none;
     }
     #previewImg.hidden { display: none; }
+
+    .zoom-controls { margin-left: auto; display: flex; align-items: center; gap: 3px; }
+    .zoom-btn {
+      height: 22px; padding: 0 7px; border: 1px solid var(--border); border-radius: 4px;
+      background: white; cursor: pointer; font-size: 13px; color: var(--text);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .zoom-btn:hover { background: var(--bg); }
+    .zoom-label { font-size: 11px; min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 
     .loading {
       position: absolute; inset: 0; background: rgba(255,255,255,.85);
@@ -153,6 +165,12 @@
     <option value="svg" selected>SVG</option>
     <option value="png">PNG</option>
   </select>
+  <label for="qualitySelect">Quality</label>
+  <select id="qualitySelect" disabled>
+    <option value="2">Standard</option>
+    <option value="4" selected>High</option>
+    <option value="6">Very High</option>
+  </select>
   <div class="spacer"></div>
   <button id="renderBtn" class="btn btn-primary">Render</button>
   <button id="downloadBtn" class="btn btn-secondary" disabled>Download</button>
@@ -171,7 +189,15 @@
     <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
   </div>
   <div class="panel panel-right">
-    <div class="panel-header">Preview</div>
+    <div class="panel-header">
+      Preview
+      <div class="zoom-controls" id="zoomControls">
+        <button class="zoom-btn" id="zoomOut" title="Zoom out">&#8722;</button>
+        <span class="zoom-label" id="zoomLabel">100%</span>
+        <button class="zoom-btn" id="zoomIn" title="Zoom in">+</button>
+        <button class="zoom-btn" id="zoomFit" title="Reset to fit">Fit</button>
+      </div>
+    </div>
     <div class="preview-area">
       <div class="preview-placeholder" id="placeholder">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -362,6 +388,7 @@ const EXAMPLES = {
 const editor      = document.getElementById('editor');
 const exampleSel  = document.getElementById('exampleSelect');
 const formatSel   = document.getElementById('formatSelect');
+const qualitySel  = document.getElementById('qualitySelect');
 const renderBtn   = document.getElementById('renderBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const errorBar    = document.getElementById('errorBar');
@@ -369,9 +396,68 @@ const errorText   = document.getElementById('errorText');
 const placeholder = document.getElementById('placeholder');
 const previewImg  = document.getElementById('previewImg');
 const loading     = document.getElementById('loading');
+const previewArea = document.querySelector('.preview-area');
+const zoomInBtn   = document.getElementById('zoomIn');
+const zoomOutBtn  = document.getElementById('zoomOut');
+const zoomFitBtn  = document.getElementById('zoomFit');
+const zoomLabel   = document.getElementById('zoomLabel');
 
 let currentSvg   = null;
 let currentBlobUrl = null;
+
+// ── Zoom / pan state ──────────────────────────────────────────────
+let zoom = 1, panX = 0, panY = 0;
+let isPanning = false, lastMouse = { x: 0, y: 0 };
+
+function updateTransform() {
+  previewImg.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  zoomLabel.textContent = Math.round(zoom * 100) + '%';
+}
+function resetZoom() { zoom = 1; panX = 0; panY = 0; updateTransform(); }
+
+zoomInBtn.addEventListener('click',  () => { zoom = Math.min(zoom * 1.25, 10); updateTransform(); });
+zoomOutBtn.addEventListener('click', () => { zoom = Math.max(zoom / 1.25, 0.1); updateTransform(); });
+zoomFitBtn.addEventListener('click', resetZoom);
+
+// Mouse-wheel zoom towards cursor
+previewArea.addEventListener('wheel', e => {
+  if (!currentSvg) return;
+  e.preventDefault();
+  const rect   = previewArea.getBoundingClientRect();
+  const cx     = e.clientX - rect.left - rect.width  / 2;
+  const cy     = e.clientY - rect.top  - rect.height / 2;
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const nz     = Math.min(Math.max(zoom * factor, 0.1), 10);
+  panX = cx - (cx - panX) * (nz / zoom);
+  panY = cy - (cy - panY) * (nz / zoom);
+  zoom = nz;
+  updateTransform();
+}, { passive: false });
+
+// Click-drag to pan
+previewArea.addEventListener('mousedown', e => {
+  if (!currentSvg) return;
+  isPanning = true;
+  lastMouse = { x: e.clientX, y: e.clientY };
+  previewArea.classList.add('panning');
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!isPanning) return;
+  panX += e.clientX - lastMouse.x;
+  panY += e.clientY - lastMouse.y;
+  lastMouse = { x: e.clientX, y: e.clientY };
+  updateTransform();
+});
+window.addEventListener('mouseup', () => {
+  isPanning = false;
+  previewArea.classList.remove('panning');
+});
+
+// Enable quality selector only for PNG
+formatSel.addEventListener('change', () => {
+  qualitySel.disabled = formatSel.value === 'svg';
+});
 
 function loadExample(key) {
   editor.value = EXAMPLES[key] ?? '';
@@ -419,34 +505,33 @@ async function render() {
     placeholder.classList.add('hidden');
     previewImg.classList.remove('hidden');
     downloadBtn.disabled = false;
+    resetZoom();
+    previewArea.classList.add('has-image');
 
   } catch (err) {
     showError(err.message ?? String(err));
     currentSvg = null;
     previewImg.classList.add('hidden');
     placeholder.classList.remove('hidden');
+    previewArea.classList.remove('has-image');
   } finally {
     loading.classList.add('hidden');
     renderBtn.disabled = false;
   }
 }
 
-async function svgToPngDataUrl(svgString) {
-  // Parse viewBox — split on whitespace for robustness (handles negatives too)
+async function svgToPngDataUrl(svgString, scale = 2) {
   const vbMatch = svgString.match(/viewBox="([^"]+)"/);
   const parts   = vbMatch ? vbMatch[1].trim().split(/\s+/) : [];
   const w = parseFloat(parts[2]) || 800;
   const h = parseFloat(parts[3]) || 600;
 
-  // encodeURIComponent data URL is canvas-safe; blob URLs can be blocked by
-  // browser security policies on HTTPS/GitHub Pages
   const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
 
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       try {
-        const scale  = 2; // retina
         const canvas = document.createElement('canvas');
         canvas.width  = w * scale;
         canvas.height = h * scale;
@@ -475,7 +560,7 @@ async function download() {
       href     = currentBlobUrl;
       filename = 'diagram.svg';
     } else {
-      href     = await svgToPngDataUrl(currentSvg);
+      href     = await svgToPngDataUrl(currentSvg, parseFloat(qualitySel.value));
       filename = 'diagram.png';
     }
     const a = document.createElement('a');
