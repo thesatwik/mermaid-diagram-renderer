@@ -80,8 +80,14 @@
     .main { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 
     .panel { display: flex; flex-direction: column; overflow: hidden; }
-    .panel-left { flex: 1; border-right: 1px solid var(--border); }
-    .panel-right { flex: 1; }
+    .panel-left { flex: 0 0 50%; min-width: 80px; }
+    .panel-right { flex: 1; min-width: 80px; }
+
+    .panel-resizer {
+      width: 5px; cursor: col-resize; background: var(--border); flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .panel-resizer:hover, .panel-resizer.active { background: var(--primary); }
 
     .panel-header {
       height: 32px; background: var(--bg); border-bottom: 1px solid var(--border);
@@ -104,6 +110,7 @@
     .preview-area.has-image { cursor: grab; }
     .preview-area.has-image.panning { cursor: grabbing !important; }
     .preview-placeholder { text-align: center; color: var(--text-secondary); font-size: 14px; line-height: 1.8; }
+    .preview-placeholder.hidden { display: none; }
     .preview-placeholder svg { display: block; margin: 0 auto 12px; opacity: 0.25; }
 
     #previewImg {
@@ -184,10 +191,11 @@
   <div class="panel panel-left">
     <div class="panel-header">
       Mermaid Code
-      <span class="hint">&mdash; Ctrl+Enter to render</span>
+      <span class="hint">&mdash; Ctrl / ⌘+Enter to render</span>
     </div>
     <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
   </div>
+  <div class="panel-resizer" id="resizer"></div>
   <div class="panel panel-right">
     <div class="panel-header">
       Preview
@@ -452,6 +460,33 @@ window.addEventListener('mousemove', e => {
 window.addEventListener('mouseup', () => {
   isPanning = false;
   previewArea.classList.remove('panning');
+});
+
+// ── Panel resizer ─────────────────────────────────────────────────
+const resizer   = document.getElementById('resizer');
+const panelLeft = document.querySelector('.panel-left');
+const mainEl    = document.querySelector('.main');
+let isResizing  = false;
+
+resizer.addEventListener('mousedown', e => {
+  isResizing = true;
+  resizer.classList.add('active');
+  document.body.style.cursor      = 'col-resize';
+  document.body.style.userSelect  = 'none';
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!isResizing) return;
+  const rect = mainEl.getBoundingClientRect();
+  const pct  = ((e.clientX - rect.left) / rect.width) * 100;
+  panelLeft.style.flexBasis = Math.min(Math.max(pct, 10), 90) + '%';
+});
+window.addEventListener('mouseup', () => {
+  if (!isResizing) return;
+  isResizing = false;
+  resizer.classList.remove('active');
+  document.body.style.cursor     = '';
+  document.body.style.userSelect = '';
 });
 
 // Enable quality selector only for PNG
