@@ -105,7 +105,7 @@
 
     .preview-area {
       flex: 1; display: flex; align-items: center; justify-content: center;
-      overflow: hidden; background: white; position: relative; padding: 20px;
+      overflow: hidden; background: white; position: relative;
     }
     .preview-area.has-image { cursor: grab; }
     .preview-area.has-image.panning { cursor: grabbing !important; }
@@ -113,13 +113,15 @@
     .preview-placeholder.hidden { display: none; }
     .preview-placeholder svg { display: block; margin: 0 auto 12px; opacity: 0.25; }
 
-    /* Inline-SVG container — vector stays crisp at any zoom level */
+    /* Absolutely positioned so JS places it at exact left/top.
+       No CSS scale() — browser re-renders SVG vector at every new size. */
     #previewImg {
-      transform-origin: center center; will-change: transform; user-select: none;
+      position: absolute;
+      user-select: none;
     }
     #previewImg.hidden { display: none; }
     #previewImg svg {
-      display: block; max-width: 100%; height: auto;
+      display: block;
       border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.08);
     }
 
@@ -427,37 +429,73 @@ function getSvgEl() { return previewImg.querySelector('svg'); }
 
 function applyZoom() {
   const svgEl = getSvgEl();
-  if (svgEl) {
-    svgEl.setAttribute('width',  Math.round(svgNatW * zoom));
-    svgEl.setAttribute('height', Math.round(svgNatH * zoom));
-  }
-  // Translate-only: no scale() means no compositing-layer rasterisation
-  previewImg.style.transform = `translate(${panX}px, ${panY}px)`;
+  if (!svgEl) return;
+
+  const w = Math.round(svgNatW * zoom);
+  const h = Math.round(svgNatH * zoom);
+
+  // Override every size constraint Mermaid may have injected
+  svgEl.setAttribute('width',  w);
+  svgEl.setAttribute('height', h);
+  svgEl.style.width     = w + 'px';
+  svgEl.style.height    = h + 'px';
+  svgEl.style.maxWidth  = 'none';
+  svgEl.style.maxHeight = 'none';
+
+  // Place the container div so the diagram is centred + panned
+  const areaW = previewArea.clientWidth;
+  const areaH = previewArea.clientHeight;
+  previewImg.style.left = Math.round((areaW - w) / 2 + panX) + 'px';
+  previewImg.style.top  = Math.round((areaH - h) / 2 + panY) + 'px';
+
   zoomLabel.textContent = Math.round(zoom * 100) + '%';
 }
 
 function resetZoom() {
   panX = 0; panY = 0;
-  // Fit to available space; never exceed 100% on first load
-  const availW = previewArea.clientWidth  - 40;
-  const availH = previewArea.clientHeight - 40;
+  const pad    = 40;
+  const availW = previewArea.clientWidth  - pad;
+  const availH = previewArea.clientHeight - pad;
   zoom = Math.min(availW / svgNatW, availH / svgNatH, 1);
   applyZoom();
 }
 
-// Alias so existing call sites still work
 function updateTransform() { applyZoom(); }
 
 zoomInBtn.addEventListener('click',  () => { zoom = Math.min(zoom * 1.25, 20); applyZoom(); });
 zoomOutBtn.addEventListener('click', () => { zoom = Math.max(zoom / 1.25, 0.05); applyZoom(); });
 zoomFitBtn.addEventListener('click', resetZoom);
 
-// Mouse-wheel zoom
+// Mouse-wheel zoom towards cursor (Miro-style)
 previewArea.addEventListener('wheel', e => {
   if (!currentSvg) return;
   e.preventDefault();
-  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-  zoom = Math.min(Math.max(zoom * factor, 0.05), 20);
+
+  const factor  = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const newZoom = Math.min(Math.max(zoom * factor, 0.05), 20);
+
+  // Cursor in previewArea coordinates
+  const rect   = previewArea.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
+  // Current SVG top-left in previewArea
+  const areaW   = previewArea.clientWidth;
+  const areaH   = previewArea.clientHeight;
+  const svgLeft = (areaW - svgNatW * zoom) / 2 + panX;
+  const svgTop  = (areaH - svgNatH * zoom) / 2 + panY;
+
+  // Content point (in SVG units) under cursor — stays fixed after zoom
+  const contentX = (mouseX - svgLeft) / zoom;
+  const contentY = (mouseY - svgTop)  / zoom;
+
+  // New SVG top-left so the same content point is still under cursor
+  const newLeft = mouseX - contentX * newZoom;
+  const newTop  = mouseY - contentY * newZoom;
+
+  panX = newLeft - (areaW - svgNatW * newZoom) / 2;
+  panY = newTop  - (areaH - svgNatH * newZoom) / 2;
+  zoom = newZoom;
   applyZoom();
 }, { passive: false });
 
