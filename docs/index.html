@@ -113,12 +113,15 @@
     .preview-placeholder.hidden { display: none; }
     .preview-placeholder svg { display: block; margin: 0 auto 12px; opacity: 0.25; }
 
+    /* Inline-SVG container — vector stays crisp at any zoom level */
     #previewImg {
-      max-width: 100%; max-height: 100%;
-      border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.08);
       transform-origin: center center; will-change: transform; user-select: none;
     }
     #previewImg.hidden { display: none; }
+    #previewImg svg {
+      display: block; max-width: 100%; height: auto;
+      border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.08);
+    }
 
     .zoom-controls { margin-left: auto; display: flex; align-items: center; gap: 3px; }
     .zoom-btn {
@@ -213,7 +216,7 @@
         </svg>
         Select an example or paste your Mermaid code,<br>then click <strong>Render</strong>
       </div>
-      <img id="previewImg" class="hidden" alt="Rendered diagram">
+      <div id="previewImg" class="hidden"></div>
       <div class="loading hidden" id="loading">
         <div class="spinner"></div>
         Rendering&hellip;
@@ -410,8 +413,7 @@ const zoomOutBtn  = document.getElementById('zoomOut');
 const zoomFitBtn  = document.getElementById('zoomFit');
 const zoomLabel   = document.getElementById('zoomLabel');
 
-let currentSvg   = null;
-let currentBlobUrl = null;
+let currentSvg = null;
 
 // ── Zoom / pan state ──────────────────────────────────────────────
 let zoom = 1, panX = 0, panY = 0;
@@ -523,20 +525,15 @@ async function render() {
   renderBtn.disabled = true;
   downloadBtn.disabled = true;
 
-  if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
-  previewImg.src = '';
+  previewImg.innerHTML = '';
 
   try {
     const id = 'mmaid-' + Date.now();
     const { svg } = await mermaid.render(id, code);
-    // mermaid may leave a hidden element — clean it up
     document.getElementById(id)?.remove();
 
     currentSvg = svg;
-
-    const blob = new Blob([svg], { type: 'image/svg+xml' });
-    currentBlobUrl = URL.createObjectURL(blob);
-    previewImg.src = currentBlobUrl;
+    previewImg.innerHTML = svg;          // inline SVG — vector-crisp at any zoom
     placeholder.classList.add('hidden');
     previewImg.classList.remove('hidden');
     downloadBtn.disabled = false;
@@ -590,9 +587,11 @@ async function download() {
   downloadBtn.textContent = 'Preparing…';
 
   try {
-    let href, filename;
+    let href, filename, blobToRevoke = null;
     if (format === 'svg') {
-      href     = currentBlobUrl;
+      const blob = new Blob([currentSvg], { type: 'image/svg+xml' });
+      href = URL.createObjectURL(blob);
+      blobToRevoke = href;
       filename = 'diagram.svg';
     } else {
       href     = await svgToPngDataUrl(currentSvg, parseFloat(qualitySel.value));
@@ -604,6 +603,7 @@ async function download() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    if (blobToRevoke) URL.revokeObjectURL(blobToRevoke);
   } catch (err) {
     showError('Download failed: ' + (err.message || String(err)));
   } finally {
